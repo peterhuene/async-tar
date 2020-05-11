@@ -15,7 +15,6 @@ use async_std::{
     stream::Stream,
     task::{Context, Poll},
 };
-use pin_project::pin_project;
 
 use crate::{
     entry::{EntryFields, EntryIo},
@@ -39,7 +38,6 @@ impl<R: Read + Unpin> Clone for Archive<R> {
     }
 }
 
-#[pin_project]
 #[derive(Debug)]
 pub struct ArchiveInner<R> {
     pos: AtomicU64,
@@ -47,7 +45,6 @@ pub struct ArchiveInner<R> {
     preserve_permissions: bool,
     preserve_mtime: bool,
     ignore_zeros: bool,
-    #[pin]
     obj: Mutex<R>,
 }
 

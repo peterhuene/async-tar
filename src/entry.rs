@@ -11,7 +11,6 @@ use async_std::{
     io::{self, prelude::*, Error, ErrorKind, SeekFrom},
     path::{Component, Path, PathBuf},
 };
-use pin_project::{pin_project, project};
 
 use filetime::{self, FileTime};
 
@@ -24,9 +23,7 @@ use crate::{
 /// This structure is a window into a portion of a borrowed archive which can
 /// be inspected. It acts as a file handle by implementing the Reader trait. An
 /// entry cannot be rewritten once inserted into an archive.
-#[pin_project]
 pub struct Entry<R: Read + Unpin> {
-    #[pin]
     fields: EntryFields<R>,
     _ignored: marker::PhantomData<Archive<R>>,
 }
@@ -41,7 +38,6 @@ impl<R: Read + Unpin> fmt::Debug for Entry<R> {
 
 // private implementation detail of `Entry`, but concrete (no type parameters)
 // and also all-public to be constructed from other modules.
-#[pin_project]
 pub struct EntryFields<R: Read + Unpin> {
     pub long_pathname: Option<Vec<u8>>,
     pub long_linkname: Option<Vec<u8>>,
@@ -50,12 +46,10 @@ pub struct EntryFields<R: Read + Unpin> {
     pub size: u64,
     pub header_pos: u64,
     pub file_pos: u64,
-    #[pin]
     pub data: Vec<EntryIo<R>>,
     pub unpack_xattrs: bool,
     pub preserve_permissions: bool,
     pub preserve_mtime: bool,
-    #[pin]
     pub(crate) read_state: Option<EntryIo<R>>,
 }
 
@@ -78,10 +72,9 @@ impl<R: Read + Unpin> fmt::Debug for EntryFields<R> {
     }
 }
 
-#[pin_project]
 pub enum EntryIo<R: Read + Unpin> {
-    Pad(#[pin] io::Take<io::Repeat>),
-    Data(#[pin] io::Take<R>),
+    Pad(io::Take<io::Repeat>),
+    Data(io::Take<R>),
 }
 
 impl<R: Read + Unpin> fmt::Debug for EntryIo<R> {
@@ -313,12 +306,11 @@ impl<R: Read + Unpin> Entry<R> {
 
 impl<R: Read + Unpin> Read for Entry<R> {
     fn poll_read(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         into: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        let mut this = self.project();
-        Pin::new(&mut *this.fields).poll_read(cx, into)
+        Pin::new(&mut self.as_mut().fields).poll_read(cx, into)
     }
 }
 
@@ -857,23 +849,23 @@ impl<R: Read + Unpin> Read for EntryFields<R> {
         cx: &mut Context<'_>,
         into: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        let mut this = self.project();
+        let mut this = self.get_mut();
         loop {
             if this.read_state.is_none() {
-                if this.data.as_ref().is_empty() {
-                    *this.read_state = None;
+                if this.data.is_empty() {
+                    this.read_state = None;
                 } else {
-                    let data = &mut *this.data;
-                    *this.read_state = Some(data.remove(0));
+                    let data = &mut this.data;
+                    this.read_state = Some(data.remove(0));
                 }
             }
 
-            if let Some(ref mut io) = &mut *this.read_state {
+            if let Some(ref mut io) = &mut this.read_state {
                 let ret = Pin::new(io).poll_read(cx, into);
                 match ret {
                     Poll::Ready(Ok(0)) => {
-                        *this.read_state = None;
-                        if this.data.as_ref().is_empty() {
+                        this.read_state = None;
+                        if this.data.is_empty() {
                             return Poll::Ready(Ok(0));
                         }
                         continue;
@@ -897,16 +889,14 @@ impl<R: Read + Unpin> Read for EntryFields<R> {
 }
 
 impl<R: Read + Unpin> Read for EntryIo<R> {
-    #[project]
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         into: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        #[project]
-        match self.project() {
-            EntryIo::Pad(io) => io.poll_read(cx, into),
-            EntryIo::Data(io) => io.poll_read(cx, into),
+        match self.get_mut() {
+            EntryIo::Pad(ref mut io) => Pin::new(io).poll_read(cx, into),
+            EntryIo::Data(ref mut io) => Pin::new(io).poll_read(cx, into),
         }
     }
 }
