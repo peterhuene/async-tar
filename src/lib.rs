@@ -39,7 +39,6 @@ mod entry_type;
 mod error;
 mod header;
 mod pax;
-mod pin_cell;
 
 fn other(msg: &str) -> Error {
     Error::new(ErrorKind::Other, msg)
