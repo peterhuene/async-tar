@@ -1,7 +1,11 @@
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     cmp,
     pin::Pin,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 use async_std::{
@@ -10,7 +14,6 @@ use async_std::{
     path::Path,
     prelude::*,
     stream::Stream,
-    sync::Arc,
     task::{Context, Poll},
 };
 use pin_project::pin_project;
@@ -42,7 +45,7 @@ impl<R: Read + Unpin> Clone for Archive<R> {
 #[pin_project]
 #[derive(Debug)]
 pub struct ArchiveInner<R> {
-    pos: Cell<u64>,
+    pos: AtomicU64,
     unpack_xattrs: bool,
     preserve_permissions: bool,
     preserve_mtime: bool,
@@ -129,7 +132,7 @@ impl<R: Read + Unpin> ArchiveBuilder<R> {
                 preserve_mtime,
                 ignore_zeros,
                 obj,
-                pos: Cell::new(0),
+                pos: 0.into(),
             }),
         }
     }
@@ -145,7 +148,7 @@ impl<R: Read + Unpin> Archive<R> {
                 preserve_mtime: true,
                 ignore_zeros: false,
                 obj: PinCell::new(obj),
-                pos: Cell::new(0),
+                pos: 0.into(),
             }),
         }
     }
@@ -170,7 +173,7 @@ impl<R: Read + Unpin> Archive<R> {
     /// stream returns), then the contents read for each entry may be
     /// corrupted.
     pub fn entries(&mut self) -> io::Result<Entries<R>> {
-        if self.inner.pos.get() != 0 {
+        if self.inner.pos.load(Ordering::SeqCst) != 0 {
             return Err(other(
                 "cannot call entries unless archive is at \
                  position 0",
@@ -193,7 +196,7 @@ impl<R: Read + Unpin> Archive<R> {
     /// stream returns), then the contents read for each entry may be
     /// corrupted.
     pub fn entries_raw(&mut self) -> io::Result<RawEntries<R>> {
-        if self.inner.pos.get() != 0 {
+        if self.inner.pos.load(Ordering::SeqCst) != 0 {
             return Err(other(
                 "cannot call entries_raw unless archive is at \
                  position 0",
@@ -358,7 +361,7 @@ fn poll_next_raw<R: Read + Unpin>(
 
     loop {
         // Seek to the start of the next header in the archive
-        let delta = *next - archive.inner.pos.get();
+        let delta = *next - archive.inner.pos.load(Ordering::SeqCst);
 
         match async_std::task::ready!(poll_skip(&mut archive, cx, delta)) {
             Ok(_) => {}
@@ -555,7 +558,7 @@ impl<R: Read + Unpin> Read for Archive<R> {
             async_std::task::ready!(crate::pin_cell::PinMut::as_mut(&mut r).poll_read(cx, into));
         match res {
             Ok(i) => {
-                self.inner.pos.set(self.inner.pos.get() + i as u64);
+                self.inner.pos.fetch_add(i as u64, Ordering::SeqCst);
                 Poll::Ready(Ok(i))
             }
             Err(err) => Poll::Ready(Err(err)),
